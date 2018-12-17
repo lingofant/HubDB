@@ -155,7 +155,7 @@ DBBCB *DBMyBufferMgr::fixBlock(DBFile &file, BlockNo blockNo, DBBCBLockMode mode
     }
 
     LOG4CXX_DEBUG(logger, "rc: " + TO_STR(rc));
-    ageBits[i] = ++gloCnt; // in case of fire check this
+    ageBits[i] = gloCnt++; // in case of fire check this
 	// check the overflow
 	if ( gloCnt == max_unsigned_int_size ) {
 		// just reset the counter :)
