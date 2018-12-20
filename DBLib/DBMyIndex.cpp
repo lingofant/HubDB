@@ -1,26 +1,26 @@
-#include <hubDB/DBSeqIndex.h>
+#include <hubDB/DBMyIndex.h>
 #include <hubDB/DBException.h>
 
 using namespace HubDB::Index;
 using namespace HubDB::Exception;
 
-LoggerPtr DBSeqIndex::logger(Logger::getLogger("HubDB.Index.DBSeqIndex"));
+LoggerPtr DBMyIndex::logger(Logger::getLogger("HubDB.Index.DBMyIndex"));
 
 // registerClass()-Methode am Ende dieser Datei: macht die Klasse der Factory bekannt
-int rSeqIdx = DBSeqIndex::registerClass();
-// set static const rootBlockNo to 0 in DBSeqIndex Class - (BlockNo=uint)
-const BlockNo DBSeqIndex::rootBlockNo(0);
+int rSeqIdx = DBMyIndex::registerClass();
+// set static const rootBlockNo to 0 in DBMyIndex Class - (BlockNo=uint)
+const BlockNo DBMyIndex::rootBlockNo(0);
 // max this amount of entries with the some value in the index - WHEN NOT UNIQUE
-const uint DBSeqIndex::MAX_TID_PER_ENTRY(20);
+const uint DBMyIndex::MAX_TID_PER_ENTRY(20);
 // Funktion bekannt machen
-extern "C" void * createDBSeqIndex(int nArgs, va_list & ap);
+extern "C" void * createDBMyIndex(int nArgs, va_list & ap);
 
 /**
  * Ausgabe des Indexes zum Debuggen
  */
-string DBSeqIndex::toString(string linePrefix) const {
+string DBMyIndex::toString(string linePrefix) const {
 	stringstream ss;
-	ss << linePrefix << "[DBSeqIndex]" << endl;
+	ss << linePrefix << "[DBMyIndex]" << endl;
 	ss << DBIndex::toString(linePrefix + "\t") << endl;
 	ss << linePrefix << "tidsPerEntry: " << tidsPerEntry << endl;
 	ss << linePrefix << "entriesPerPage: " << entriesPerPage() << endl;
@@ -35,7 +35,7 @@ string DBSeqIndex::toString(string linePrefix) const {
  * - ModType mode (Accesstyp: READ, WRITE - siehe DBTypes.h)
  * - bool unique (ist Attribute unique)
  */
-DBSeqIndex::DBSeqIndex(DBBufferMgr & bufferMgr, DBFile & file,
+DBMyIndex::DBMyIndex(DBBufferMgr & bufferMgr, DBFile & file,
 		enum AttrTypeEnum attrType, ModType mode, bool unique) :
 			// call base constructor
 			DBIndex(bufferMgr, file, attrType, mode, unique),
@@ -46,7 +46,7 @@ DBSeqIndex::DBSeqIndex(DBBufferMgr & bufferMgr, DBFile & file,
 			// temporaer zwischenzuspeichern --> siehe genFirstLast()
 			first_(NULL), last_(NULL) {
 	if (logger != NULL) {
-		LOG4CXX_INFO(logger,"DBSeqIndex()");
+		LOG4CXX_INFO(logger,"DBMyIndex()");
 	}
 
 	assert(entriesPerPage()>1);
@@ -74,8 +74,8 @@ DBSeqIndex::DBSeqIndex(DBBufferMgr & bufferMgr, DBFile & file,
  * Destrkctor
  * Soll first_, last_ und alle geblockten Bloecke wieder freigeben
  */
-DBSeqIndex::~DBSeqIndex() {
-	LOG4CXX_INFO(logger,"~DBSeqIndex()");
+DBMyIndex::~DBMyIndex() {
+	LOG4CXX_INFO(logger,"~DBMyIndex()");
 	unfixBACBs(false);
 	if (first_ != NULL)
 		delete first_;
@@ -86,7 +86,7 @@ DBSeqIndex::~DBSeqIndex() {
 /**
  * Freigeben aller vom Index geblockten Bloecke
  */
-void DBSeqIndex::unfixBACBs(bool setDirty) {
+void DBMyIndex::unfixBACBs(bool setDirty) {
 	LOG4CXX_INFO(logger,"unfixBACBs()");
 	LOG4CXX_DEBUG(logger,"setDirty: "+TO_STR(setDirty));
 	LOG4CXX_DEBUG(logger,"bacbStack.size()= "+TO_STR(bacbStack.size()));
@@ -115,7 +115,7 @@ void DBSeqIndex::unfixBACBs(bool setDirty) {
  * Bsp.: VARCHAR: entriesPerPage() = (1024-4) / (30+8*20) = 5, Rest 70
  * Bsp.: INTEGER UNIQUE: entriesPerPage() = (1024-4) / (4+8*1) = 85, Rest 0
  */
-uint DBSeqIndex::entriesPerPage() const {
+uint DBMyIndex::entriesPerPage() const {
 	return (DBFileBlock::getBlockSize() - sizeof(uint)) /
 			(DBAttrType::getSize4Type(attrType) + sizeof(TID) * tidsPerEntry);
 }
@@ -123,7 +123,7 @@ uint DBSeqIndex::entriesPerPage() const {
 /**
  * Erstelle Indexdatei.
  */
-void DBSeqIndex::initializeIndex() {
+void DBMyIndex::initializeIndex() {
 	LOG4CXX_INFO(logger,"initializeIndex()");
 	if (bufMgr.getBlockCnt(file) != 0)
 		throw DBIndexException("can not initializie exisiting table");
@@ -152,7 +152,7 @@ void DBSeqIndex::initializeIndex() {
  * Rueckgabewert: KEINER, aber die Funktion aendert die uebergebene Liste
  * von TID Objekten (siehe DBTypes.h: typedef list<TID> DBListTID;)
  */
-void DBSeqIndex::find(const DBAttrType & val, DBListTID & tids) {
+void DBMyIndex::find(const DBAttrType & val, DBListTID & tids) {
 	LOG4CXX_INFO(logger,"find()");
 	LOG4CXX_DEBUG(logger,"val:\n"+val.toString("\t"));
 
@@ -180,7 +180,7 @@ void DBSeqIndex::find(const DBAttrType & val, DBListTID & tids) {
  * Einfuegen eines Schluesselwertes (moeglicherweise bereits vorhangen)
  * zusammen mit einer Referenz auf eine TID.
  */
-void DBSeqIndex::insert(const DBAttrType & val, const TID & tid) {
+void DBMyIndex::insert(const DBAttrType & val, const TID & tid) {
 	LOG4CXX_INFO(logger,"insert()");
 	LOG4CXX_DEBUG(logger,"val:\n"+val.toString("\t"));
 	LOG4CXX_DEBUG(logger,"tid: "+tid.toString());
@@ -212,7 +212,7 @@ void DBSeqIndex::insert(const DBAttrType & val, const TID & tid) {
  * Um schneller auf der richtigen Seite mit dem Entfernen anfangen zu koennen,
  * wird zum Suchen auch noch der zu loeschende value uebergeben
  */
-void DBSeqIndex::remove(const DBAttrType & val, const list<TID> & tid) {
+void DBMyIndex::remove(const DBAttrType & val, const list<TID> & tid) {
 	LOG4CXX_INFO(logger,"remove()");
 	LOG4CXX_DEBUG(logger,"val:\n"+val.toString("\t"));
 
@@ -246,7 +246,7 @@ void DBSeqIndex::remove(const DBAttrType & val, const list<TID> & tid) {
 /**
  * Sucht erste Seite auf der ein bestimmter Value in einem Tupel stehen KOENNTE
  */
-bool DBSeqIndex::findFirstPage(const DBAttrType & val, BlockNo & blockNo) {
+bool DBMyIndex::findFirstPage(const DBAttrType & val, BlockNo & blockNo) {
 	LOG4CXX_INFO(logger,"findFirstPage()");
 	LOG4CXX_DEBUG(logger,"val:\n"+val.toString("\t"));
 
@@ -353,7 +353,7 @@ bool DBSeqIndex::findFirstPage(const DBAttrType & val, BlockNo & blockNo) {
  * Durchsucht eine bestimmte Seite nach einem Wert
  * Kein Rueckgabewert, aber es wird die uebergebene Liste tids gefuellt
  */
-void DBSeqIndex::findFromPage(const DBAttrType & val, BlockNo blockNo, list<TID> & tids) {
+void DBMyIndex::findFromPage(const DBAttrType & val, BlockNo blockNo, list<TID> & tids) {
 	LOG4CXX_INFO(logger,"findFromPage()");
 	LOG4CXX_DEBUG(logger,"val:\n"+val.toString("\t"));
 
@@ -424,7 +424,7 @@ void DBSeqIndex::findFromPage(const DBAttrType & val, BlockNo blockNo, list<TID>
  * Loescht alle Tupel mit den uebergebenen TIDs
  * angefangen auf der Seite mit Blocknummer blockNo
  */
-void DBSeqIndex::removeFromPage(const DBAttrType & val, list<TID> tids, BlockNo blockNo) {
+void DBMyIndex::removeFromPage(const DBAttrType & val, list<TID> tids, BlockNo blockNo) {
 	LOG4CXX_INFO(logger,"removeFromPage()");
 	LOG4CXX_DEBUG(logger,"val:\n"+val.toString("\t"));
 	LOG4CXX_DEBUG(logger,"blockNo: "+ TO_STR(blockNo));
@@ -555,7 +555,7 @@ void DBSeqIndex::removeFromPage(const DBAttrType & val, list<TID> tids, BlockNo 
  * der dazugehoerige TID in eine Seite
  * Start bei Seite mit blockNo
  */
-void DBSeqIndex::insertInPage(const DBAttrType & val, const TID & tid, BlockNo blockNo) {
+void DBMyIndex::insertInPage(const DBAttrType & val, const TID & tid, BlockNo blockNo) {
 	LOG4CXX_INFO(logger,"insertInPage()");
 	LOG4CXX_DEBUG(logger,"val:\n"+val.toString("\t"));
 	LOG4CXX_DEBUG(logger,"tid: "+tid.toString());
@@ -776,7 +776,7 @@ void DBSeqIndex::insertInPage(const DBAttrType & val, const TID & tid, BlockNo b
  * Diese Methode fuegt in die sequenzielle Indexdatei (* file)
  * einen Block an Position pos ein
  */
-void DBSeqIndex::insertEmptyPage(BlockNo pos) {
+void DBMyIndex::insertEmptyPage(BlockNo pos) {
 	LOG4CXX_INFO(logger,"insertEmptyPage()");
 	LOG4CXX_DEBUG(logger,"blockNo: "+ TO_STR(pos));
 
@@ -835,7 +835,7 @@ void DBSeqIndex::insertEmptyPage(BlockNo pos) {
 /**
  * Loescht an Position pos eine leere Seite
  */
-void DBSeqIndex::removeEmptyPage(BlockNo blockNo) {
+void DBMyIndex::removeEmptyPage(BlockNo blockNo) {
 	LOG4CXX_INFO(logger,"removeEmptyPage()");
 	LOG4CXX_DEBUG(logger,"blockNo: "+ TO_STR(blockNo));
 
@@ -885,7 +885,7 @@ void DBSeqIndex::removeEmptyPage(BlockNo blockNo) {
  * Prueft, ob eine Seite Tupel enthalt.
  * Es wird der uint an der nullten Stelle eines Blockes derefernziert
  */
-bool DBSeqIndex::isEmpty(const char * ptr) {
+bool DBMyIndex::isEmpty(const char * ptr) {
 	uint cnt = *(uint*) ptr;
 	if (cnt == 0)
 		return true;
@@ -895,8 +895,8 @@ bool DBSeqIndex::isEmpty(const char * ptr) {
 /**
  * Erstes und letztes Element eines Blockes in die Variablen first_ und last_ abspeichern
  */
-void DBSeqIndex::genFirstLast(const char * ptr) {
-	//  INFO [0xb7854b70] {DBSeqIndex.cpp:567} Index::DBSeqIndex::genFirstLast - genFirstLast()
+void DBMyIndex::genFirstLast(const char * ptr) {
+	//  INFO [0xb7854b70] {DBMyIndex.cpp:567} Index::DBMyIndex::genFirstLast - genFirstLast()
 	LOG4CXX_INFO(logger,"genFirstLast()");
 	// wenn first_ bereits belegt -> loeschen
 	if (first_ != NULL)
@@ -918,10 +918,10 @@ void DBSeqIndex::genFirstLast(const char * ptr) {
 }
 
 /**
- * Fuegt createDBSeqIndex zur globalen factory method-map hinzu
+ * Fuegt createDBMyIndex zur globalen factory method-map hinzu
  */
-int DBSeqIndex::registerClass() {
-	setClassForName("DBSeqIndex", createDBSeqIndex);
+int DBMyIndex::registerClass() {
+	setClassForName("DBMyIndex", createDBMyIndex);
 	return 0;
 }
 
@@ -933,7 +933,7 @@ int DBSeqIndex::registerClass() {
  * - ModeType: READ, WRITE
  * - bool: unique Indexattribut
  */
-extern "C" void * createDBSeqIndex(int nArgs, va_list & ap) {
+extern "C" void * createDBMyIndex(int nArgs, va_list & ap) {
 	// Genau 5 Parameter
 	if (nArgs != 5) {
 		throw DBException("Invalid number of arguments");
@@ -943,5 +943,5 @@ extern "C" void * createDBSeqIndex(int nArgs, va_list & ap) {
 	enum AttrTypeEnum attrType = (enum AttrTypeEnum) va_arg(ap,int);
 	ModType m = (ModType) va_arg(ap,int);
 	bool unique = (bool) va_arg(ap,int);
-	return new DBSeqIndex(*bufMgr, *file, attrType, m, unique);
+	return new DBMyIndex(*bufMgr, *file, attrType, m, unique);
 }

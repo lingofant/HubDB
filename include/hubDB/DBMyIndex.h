@@ -16,7 +16,7 @@ namespace HubDB{
 				void find(const DBAttrType & val,DBListTID & tids);
 				void insert(const DBAttrType & val,const TID & tid);
 				void remove(const DBAttrType & val,const DBListTID & tid);
-				bool isIndexNonUniqueAble(){ return true;};
+				bool isIndexNonUniqueAble(){ return false;};
 				void unfixBACBs(bool dirty);				
 				
 				static int registerClass();
