@@ -1,7 +1,5 @@
 # Ignore All
-*
+/*
 #But These Files
-!*/DBLib/DBMyBufferMgr.cpp
-!*/DBLib/DBMyIndexMgr.cpp
-!*/include/hubDB/DBMyBufferMgr.h
-!*/include/hubDB/DBMyIndexMgr.h
+!/DBLib/
+!/include/
