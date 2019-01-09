@@ -28,6 +28,8 @@ const uint DBMyIndex::MAX_TID_PER_ENTRY(20);
 extern "C" void *createDBMyIndex(int nArgs, va_list ap);
 
 int leaf_size = 10;
+int sizeOfHead = sizeof(bool) * 2 + sizeof(int) + sizeof(TID);
+
 
 /**
  * Ausgabe des Indexes zum Debuggen
@@ -79,6 +81,15 @@ DBMyIndex::DBMyIndex(DBBufferMgr &bufferMgr, DBFile &file,
     // fuege ersten Block der Indexdatei in den Stack der geblockten Bloecke hinzu
     bacbStack.push(bufMgr.fixBlock(file, rootBlockNo,
                                    mode == READ ? LOCK_SHARED : LOCK_INTWRITE));
+    char *swap_ptr = bacbStack.top().getDataPtr();
+    TID rootTID;
+    rootTID.read(swap_ptr);
+    if (rootTID.page != 0) {
+        bacbStack.pop();
+        bacbStack.push(bufMgr.fixBlock(file, rootTID.page,
+                                       mode == READ ? LOCK_SHARED : LOCK_INTWRITE));
+
+    }
 
     if (logger != NULL) {
         LOG4CXX_DEBUG(logger, "this:\n" + toString("\t"));
@@ -150,19 +161,28 @@ void DBMyIndex::initializeIndex() {
         bacbStack.push(bufMgr.fixNewBlock(file));
         // modified date setzen
 
+        TID roottid;
+        roottid.page = 0;
         bool isroot = true;
         bool isleaf = true;
+
         bool *boolptr = &isroot;
         char *ptr = bacbStack.top().getDataPtr();
         uint *cnt = (uint *) ptr;
         if (*cnt == 0) {
+            memcpy(ptr, &roottid, sizeof(TID));
+            ptr += sizeof(TID);
             // memcpy (*destination, *source, size);
             memcpy(ptr, boolptr, sizeof(bool));
             ptr += sizeof(bool);
             memcpy(ptr, boolptr, sizeof(bool));
             ptr += sizeof(bool);
-            int nextBlockNo = 15;
-            memcpy(ptr, &nextBlockNo, sizeof(nextBlockNo));
+            int fill_level = 0;
+            memcpy(ptr, &fill_level, sizeof(int));
+            ptr += sizeof(int);
+            TID next;
+            next.page = -1;
+            memcpy(ptr, &next, sizeof(TID));
         }
         bacbStack.top().setModified();
     } catch (DBException e) {
@@ -209,94 +229,18 @@ void DBMyIndex::insert(const DBAttrType &val, const TID &tid) {
 
     // vor Beginn der Operation darf nur genau eine Seite
     // (wie immer die nullte) gelockt sein
-    //ToDo: Wahrscheinlich ändern
 
     if (bacbStack.size() != 1)
         throw DBIndexException("BACB Stack is invalid");
-
-
-
 
     // wenn diese eine Seite nicht exclusive gelockt ist, dann dies nachholen!
     if (bacbStack.top().getLockMode() != LOCK_EXCLUSIVE)
         bufMgr.upgradeToExclusive(bacbStack.top());
 
 
-    //ToDo: implementieren von Suche der passenden Leaf und insert Operation - dabei split berücksichtigen
-
-    /*
-     * springe zu 2*boolen und 1*pointer zu erstem value
-     * füge ein
-     */
-
-
-
-
-    char *ptr = bacbStack.top().getDataPtr();
-    bool isroot;
-    // memcpy (*destination, *source, size);
-    memcpy(&isroot, ptr, sizeof(bool));
-    ptr += sizeof(bool);
-
-    bool isleaf;
-    memcpy(&isleaf, ptr, sizeof(bool));
-    ptr += sizeof(bool);
-
-    int nextBlockNo;
-    memcpy(&nextBlockNo, ptr, sizeof(nextBlockNo));
-    ptr += sizeof(nextBlockNo);
-
-
-    // memcpy (*destination, *source, size);
-
-    uint *cnt = (uint *) ptr;
-
-    DBAttrType *searchval;
-    char *insert_position, *end_position;
-
-
-    bool found = false;
-    for (int i = 0; i < leaf_size; ++i) {
-        if (*cnt == 0) {
-            end_position = ptr;
-            break;
-        }
-        else{
-            searchval = DBAttrType::read(ptr, attrType);
-            if (val.operator<(*searchval) && !found) {
-                found = true;
-                insert_position = ptr;
-            }
-        }
-        ptr += (sizeof(val) + sizeof(tid));
-        cnt = (uint *) ptr;
-
-    }
-    if (found) {
-        //ToDo: Folgendes geht nur wenn man weiß das in dieses blatt eingefügt wird
-        // ist dies nicht der fall muss man schauen ob das nächste blatt einen höreren wert hat
-        do {
-            char *swap_pointer = end_position;
-            end_position -= sizeof(tid);
-            memcpy(swap_pointer + sizeof(val), end_position, sizeof(tid));
-            end_position -= sizeof(val);
-            memcpy(swap_pointer, end_position, sizeof(val));
-        } while (end_position != insert_position);
-
-    }
-    val.write(end_position);
-    end_position += sizeof(val);
-    tid.write(end_position);
-
-    // memcpy (*destination, *source, size);
-    bacbStack.top().setModified();
-    bufMgr.unfixBlock(bacbStack.top());
-
-    last_ = DBAttrType::read(ptr, attrType);
-
-
-
-
+    TID rootTID;
+    rootTID.read(bacbStack.top().getDataPtr());
+    search_in_node(val, tid, rootTID);
     // am Ende der operation muss genau eine Seite gelockt sein
     if (bacbStack.size() != 1)
         throw DBIndexException("BACB Stack is invalid");
@@ -333,12 +277,367 @@ void DBMyIndex::remove(const DBAttrType &val, const list<TID> &tid) {
         throw DBIndexException("BACB Stack is invalid");
 }
 
+
 /**
  * Fuegt createDBMyIndex zur globalen factory method-map hinzu
  */
 int DBMyIndex::registerClass() {
     setClassForName("DBMyIndex", createDBMyIndex);
     return 0;
+}
+
+
+TID DBMyIndex::initNode(bool isroot, bool isleaf, TID next) {
+    //Neuen Block für Leaf
+    bacbStack.push(bufMgr.fixNewBlock(file));
+    char *ptr = bacbStack.top().getDataPtr();
+    char *leafptr = ptr;
+    uint *cnt = (uint *) ptr;
+    if (*cnt == 0) {
+        // memcpy (*destination, *source, size);
+        memcpy(ptr, &isroot, sizeof(bool));
+        ptr += sizeof(bool);
+        memcpy(ptr, &isleaf, sizeof(bool));
+        ptr += sizeof(bool);
+        int fill_level = 0;
+        memcpy(ptr, &fill_level, sizeof(int));
+        ptr += sizeof(int);
+        memcpy(ptr, &next, sizeof(TID));
+    }
+
+    TID tid;
+    tid.page = bacbStack.top().getBlockNo();
+    tid.slot = 0;
+    return tid;
+}
+
+DBMyIndex::value_container DBMyIndex::split_node(const DBAttrType &val, const TID &tid, TID node) {
+    /*
+     * new_node
+     * größere hälfte in node kopieren
+     * if root
+     *      new_root
+     *      alte_root is root false
+     *      new_root insert smalles value of new_node
+     *      in mgmt_varibalen root_tid = new_root_tid
+     *
+     * return node_tid, smallest_val_of_new_node
+     */
+
+    value_container vc;
+    vc.tid.page = -1;
+
+    char *ptr = bacbStack.top().getDataPtr();
+    char *leafptr = ptr;
+
+    if (bacbStack.top().getBlockNo() == 0) {
+        ptr += sizeof(TID);
+    }
+
+    bool isroot;
+    char *isrootptr = ptr;
+    // memcpy (*destination, *source, size);
+    memcpy(&isroot, ptr, sizeof(bool));
+    ptr += sizeof(bool);
+
+    bool isleaf;
+    memcpy(&isleaf, ptr, sizeof(bool));
+    ptr += sizeof(bool);
+
+    int fill_level;
+    memcpy(&fill_level, ptr, sizeof(int));
+    fill_level = leaf_size / 2;
+    memcpy(ptr, &fill_level, sizeof(int));
+    ptr += sizeof(int);
+
+    TID next;
+    next.read(ptr);
+    char * next_ptr = ptr;
+    ptr += sizeof(TID);
+
+
+
+    //Pointer auf die zu kopierenden werte
+    if(!isleaf){
+
+        ptr += (sizeof(val) + sizeof(tid)) * leaf_size / 2 -1 + sizeof(val);
+        memcpy(next_ptr, ptr, sizeof(TID));
+        ptr += sizeof(TID);
+    }
+    else{
+        ptr += (sizeof(val) + sizeof(tid)) * leaf_size / 2;
+    }
+
+    TID node_tid = initNode(false, isleaf, next);
+    char *newnode_ptr = bacbStack.top().getDataPtr();
+    if(isleaf){
+        node_tid.write(next_ptr);
+
+    }
+    newnode_ptr += sizeof(bool) * 2;
+    memcpy(newnode_ptr, &fill_level, sizeof(int));
+    newnode_ptr += sizeof(int) + sizeof(TID);
+
+    vc.val = DBAttrType::read(ptr, attrType);
+    vc.tid = node;
+    memmove(newnode_ptr, ptr, (sizeof(val) + sizeof(tid)) * (leaf_size - leaf_size / 2));
+    bacbStack.top().setModified();
+
+    vc.isnew = true;
+
+    if (isroot) {
+
+        TID newroot = initNode(true, false, node_tid);
+        bool f = false;
+        memcpy(isrootptr, &f, sizeof(bool));
+        bacbStack.top().setModified();
+        bufMgr.unfixBlock(bacbStack.top());
+        unfixBACBs(false);
+        bacbStack.push(bufMgr.fixBlock(file, rootBlockNo, LOCK_EXCLUSIVE));
+        char *swap_ptr = bacbStack.top().getDataPtr();
+        newroot.write(swap_ptr);
+        bacbStack.top().setModified();
+        bufMgr.unfixBlock(bacbStack.top());
+        bacbStack.pop();
+        bacbStack.push(bufMgr.fixBlock(file, newroot.page, LOCK_EXCLUSIVE));
+        vc.isnew = false;
+
+    }
+
+    return vc;
+}
+
+DBMyIndex::value_container DBMyIndex::insert_into_node(const DBAttrType &val, const TID &tid, TID node) {
+    struct value_container vc;
+    vc.tid.page - 1;
+
+    bool leftie = false;
+
+    char *ptr = bacbStack.top().getDataPtr();
+
+    if (bacbStack.top().getBlockNo() == 0) {
+        ptr += sizeof(TID);
+    }
+
+    int page = bacbStack.top().getBlockNo();
+
+    char *leafptr = ptr;
+    bool isroot;
+    // memcpy (*destination, *source, size);
+    memcpy(&isroot, ptr, sizeof(bool));
+    ptr += sizeof(bool);
+
+    bool isleaf;
+    memcpy(&isleaf, ptr, sizeof(bool));
+    ptr += sizeof(bool);
+
+    int fill_level;
+    memcpy(&fill_level, ptr, sizeof(int));
+    if (fill_level < leaf_size) {
+        fill_level += 1;
+    }
+    memcpy(ptr, &fill_level, sizeof(int));
+    ptr += sizeof(int);
+
+    TID nextNode;
+    memcpy(&nextNode, ptr, sizeof(TID));
+    ptr += sizeof(TID);
+
+    // memcpy (*destination, *source, size);
+
+
+
+
+    uint *cnt = (uint *) ptr;
+
+    DBAttrType *searchval;
+    char *insert_position, *end_position;
+
+
+    bool found = false;
+    bool reached_end = false;
+
+    if (fill_level < leaf_size) {
+        for (int i = 0; i < leaf_size; ++i) {
+            if (*cnt == 0 || i == fill_level - 1) {
+                reached_end = true;
+                end_position = ptr;
+                break;
+            } else {
+                searchval = DBAttrType::read(ptr, attrType);
+                if (val.operator<(*searchval) && !found) {
+                    found = true;
+                    insert_position = ptr;
+                }
+            }
+            ptr += (sizeof(val) + sizeof(tid));
+            cnt = (uint *) ptr;
+
+        }
+    }
+    if (found) {
+        do {
+            char *swap_pointer = end_position;
+            end_position -= sizeof(tid);
+            memcpy(swap_pointer + sizeof(val), end_position, sizeof(tid));
+            end_position -= sizeof(val);
+            memcpy(swap_pointer, end_position, sizeof(val));
+        } while (end_position != insert_position);
+
+    }
+    if (reached_end) {
+        val.write(end_position);
+        end_position += sizeof(val);
+        tid.write(end_position);
+    } else {
+        vc = split_node(val, tid, node);
+        if (isroot) {
+            char *ptr = bacbStack.top().getDataPtr();
+            int root_level = 1;
+            ptr += sizeof(bool) * 2;
+            memcpy(ptr, &root_level, sizeof(int));
+            ptr += sizeof(int) + sizeof(TID);
+
+            vc.val->write(ptr);
+            ptr += sizeof(val);
+            vc.tid.page = page;
+            vc.tid.write(ptr);
+            bacbStack.top().setModified();
+            vc.isnew = false;
+            //   insert_into_node(val, tid, vc.tid);
+        } else {
+            if (vc.val->operator>(val)) {
+                bufMgr.unfixBlock(bacbStack.top());
+                bacbStack.pop();
+                insert_into_node(val, tid, node);
+                leftie = true;
+            } else {
+                insert_into_node(val, tid, vc.tid);
+                bufMgr.unfixBlock(bacbStack.top());
+
+            }
+        }
+    }
+    // memcpy (*destination, *source, size);
+
+    bufMgr.unfixBlock(bacbStack.top());
+    if (!isroot && !leftie) {
+        bacbStack.pop();
+    }
+    return vc;
+
+
+
+    /*
+     * einfügen von wert in leaf
+     * if overflow
+     *      new_leaf_address = splitnode
+     *      entscheidung in welches leaf eingefügt werden soll
+     *              insert_in_node
+     * return new_leaf_address;
+     *
+     */
+
+}
+
+DBMyIndex::value_container DBMyIndex::search_in_node(const DBAttrType &val, const TID &tid, TID node) {
+    /* in node nach wert suchen
+     *      if leaf
+     *          new_leaf_address  = einfügen_in_node
+     *      if node
+     *          search_in_node
+     * if new_leaf_address
+     *      insert_in_node
+     */
+
+
+
+    char *ptr = bacbStack.top().getDataPtr();
+
+
+    if (bacbStack.top().getBlockNo() == 0) {
+        ptr += sizeof(TID);
+    }
+
+
+    char *leafptr = ptr;
+    bool isroot;
+    // memcpy (*destination, *source, size);
+    memcpy(&isroot, ptr, sizeof(bool));
+    ptr += sizeof(bool);
+
+    bool isleaf;
+    memcpy(&isleaf, ptr, sizeof(bool));
+    ptr += sizeof(bool);
+
+    int fill_level;
+    memcpy(&fill_level, ptr, sizeof(int));
+    ptr += sizeof(int);
+
+    TID nextNode;
+    nextNode.read(ptr);
+    ptr += sizeof(TID);
+
+    // memcpy (*destination, *source, size);
+
+    uint *cnt = (uint *) ptr;
+
+    DBAttrType *searchval;
+    char *insert_position, *end_position;
+
+
+    bool found = false;
+    bool reached_end = false;
+    value_container vc;
+    vc.tid.page = -1;
+
+    for (int i = 0; i < leaf_size; ++i) {
+                    if (*cnt == 0 || i == fill_level) {
+                if (isleaf) {
+                    vc = insert_into_node(val, tid, node);
+                    reached_end = true;
+                } else {
+                    bacbStack.push(bufMgr.fixBlock(file, nextNode.page, LOCK_EXCLUSIVE));
+                    vc = search_in_node(val, tid, node);
+                }
+                break;
+            } else {
+                searchval = DBAttrType::read(ptr, attrType);
+                if (val.operator<(*searchval) && !found) {
+                    found = true;
+                    insert_position = ptr;
+                    if (isleaf) {
+                        vc = insert_into_node(val, tid, node);
+                        break;
+                    } else {
+                        TID node;
+                        node.read(ptr + sizeof(val));
+                        bacbStack.push(bufMgr.fixBlock(file, node.page, LOCK_EXCLUSIVE));
+                        vc = search_in_node(val, tid, node);
+                        break;
+                    }
+                }
+            }
+            ptr += (sizeof(val) + sizeof(tid));
+            cnt = (uint *) ptr;
+        }
+
+    if (isleaf && !found && !reached_end) {
+        vc = insert_into_node(val, tid, node);
+    } else if (!isleaf && !found) {
+        vc = search_in_node(val, tid, nextNode);
+    }
+
+     if (vc.isnew){
+
+          insert_into_node(*vc.val, vc.tid, node);
+      }
+
+
+
+
+
+    return DBMyIndex::value_container();
 }
 
 

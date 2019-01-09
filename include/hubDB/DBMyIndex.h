@@ -31,6 +31,19 @@ namespace HubDB {
         private:
             static const uint MAX_TID_PER_ENTRY;
             const uint tidsPerEntry;
+            struct value_container{
+                DBAttrType *val;
+                TID tid;
+                bool isnew = false;
+            };
+
+
+            bool splitLeaf(const DBAttrType &val, const TID &tid, char *leaf);
+            TID initNode(bool isroot, bool isleaf, TID next);
+
+            value_container search_in_node(const DBAttrType &val, const TID &tid, TID node);
+            value_container insert_into_node(const DBAttrType &val, const TID &tid, TID node);
+            value_container split_node(const DBAttrType &val, const TID &tid, TID node);
 
 
             uint entriesPerPage() const;
@@ -40,6 +53,7 @@ namespace HubDB {
             DBAttrType &last() { return *last_; };
 
             static LoggerPtr logger;
+
             static const BlockNo rootBlockNo;
             stack<DBBACB> bacbStack;
             DBAttrType *first_;
