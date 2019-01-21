@@ -61,6 +61,7 @@ namespace HubDB {
             static LoggerPtr logger;
 
             static const BlockNo rootBlockNo;
+            TID rootTID;
             stack<DBBACB> bacbStack;
             DBAttrType *first_;
             DBAttrType *last_;
