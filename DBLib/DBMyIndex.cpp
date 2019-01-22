@@ -336,7 +336,8 @@ TID DBMyIndex::initNode(bool isroot, bool isleaf, TID next) {
  * @param islast
  * @return
  */
-DBMyIndex::value_container DBMyIndex::split_node(const DBAttrType &val, const TID &tid, TID node, char *parent_ptr, bool islast) {
+DBMyIndex::value_container
+DBMyIndex::split_node(const DBAttrType &val, const TID &tid, TID node, char *tid_ptr) {
 
     value_container vc;
     vc.tid.page = -1;
@@ -445,7 +446,7 @@ DBMyIndex::value_container DBMyIndex::split_node(const DBAttrType &val, const TI
 
     //Set Values of new node
     fill_level = leaf_size - fill_level;
-    char * new_node_fill_level = newnode_ptr + sizeof(bool) * 2;
+    char *new_node_fill_level = newnode_ptr + sizeof(bool) * 2;
     // memcpy (*destination, *source, size);
     memcpy(new_node_fill_level, &fill_level, sizeof(int));
 
@@ -462,10 +463,10 @@ DBMyIndex::value_container DBMyIndex::split_node(const DBAttrType &val, const TI
 }
 
 
-
 /**
  * Split Root Node if the root node is not a leaf
  */
+
 DBMyIndex::value_container DBMyIndex::split_root(const DBAttrType &val, const TID &tid, TID node) {
 
     //Read Values of Page
@@ -533,6 +534,8 @@ DBMyIndex::value_container DBMyIndex::split_root(const DBAttrType &val, const TI
     //Take the value of the middle and safe it for the new root
     DBAttrType *root_val;
     searchval = DBAttrType::read(ptr, attrType);
+    int loop_size = fill_level / 2;
+    bool add_value = false;
     if (val.operator>(*searchval) || inserted) {
         root_val = DBAttrType::read(ptr, attrType);
         ptr += sizeof(val);
@@ -540,13 +543,15 @@ DBMyIndex::value_container DBMyIndex::split_root(const DBAttrType &val, const TI
         swap_tid.read(ptr);
         swap_tid.write(new_next_ptr);
         ptr += sizeof(TID);
+        loop_size -= 1;
+        add_value = true;
     } else {
         *root_val = val;
         tid.write(new_next_ptr);
     }
 
     //Copy the bigger values to the beginning of the old node
-    for (int i = 0; i < fill_level / 2; i++) {
+    for (int i = 0; i < loop_size; i++) {
         searchval = DBAttrType::read(ptr, attrType);
         if (val.operator>(*searchval) || inserted) {
             searchval->write(old_values_ptr);
@@ -566,6 +571,14 @@ DBMyIndex::value_container DBMyIndex::split_root(const DBAttrType &val, const TI
         }
     }
 
+    if(add_value){
+        val.write(old_values_ptr);
+        old_values_ptr += sizeof(val);
+        tid.write(old_values_ptr);
+        old_values_ptr += sizeof(TID);
+        inserted = true;
+    }
+
     isroot = false;
     fill_level = fill_level / 2;
 
@@ -575,7 +588,7 @@ DBMyIndex::value_container DBMyIndex::split_root(const DBAttrType &val, const TI
 
     //Set Values of new node
     fill_level = leaf_size - fill_level;
-    char * new_node_fill_level = newnode_ptr + sizeof(bool) * 2;
+    char *new_node_fill_level = newnode_ptr + sizeof(bool) * 2;
     // memcpy (*destination, *source, size);
     memcpy(new_node_fill_level, &fill_level, sizeof(int));
 
@@ -601,7 +614,7 @@ DBMyIndex::value_container DBMyIndex::split_root(const DBAttrType &val, const TI
     new_node_tid.write(root_values_ptr);
 
     int root_fill = 1;
-    char * new_root_fill_level = newroot_ptr + sizeof(bool) * 2;
+    char *new_root_fill_level = newroot_ptr + sizeof(bool) * 2;
     // memcpy (*destination, *source, size);
     memcpy(new_root_fill_level, &root_fill, sizeof(int));
 
@@ -622,7 +635,6 @@ DBMyIndex::value_container DBMyIndex::split_root(const DBAttrType &val, const TI
     bacbStack.push(bufMgr.fixBlock(file, new_root_tid.page, LOCK_EXCLUSIVE));
 
 
-    tree = printTree();
     //Return empty value container
     return DBMyIndex::value_container();
 
@@ -630,11 +642,13 @@ DBMyIndex::value_container DBMyIndex::split_root(const DBAttrType &val, const TI
 
 
 DBMyIndex::value_container
-DBMyIndex::split_leaf(const DBAttrType &val, const TID &tid, TID node, char *parent_ptr, bool islast) {
+DBMyIndex::split_leaf(const DBAttrType &val, const TID &tid, TID node, char *tid_ptr) {
     value_container vc;
     vc.tid.page = -1;
 
     char *ptr = bacbStack.top().getDataPtr();
+    int current_block = bacbStack.top().getBlockNo();
+
     char *leafptr = ptr;
 
     if (bacbStack.top().getBlockNo() == 0) {
@@ -662,15 +676,25 @@ DBMyIndex::split_leaf(const DBAttrType &val, const TID &tid, TID node, char *par
     ptr += sizeof(TID);
 
 
-    char *start_values_ptr = ptr;
     char *swap_ptr = ptr;
 
+    //new tid to add in parent
+    vc.tid.page = current_block;
+
+    //init new node with pointer
     TID new_node_tid = initNode(false, isleaf, next);
     char *newnode_ptr = bacbStack.top().getDataPtr();
     char *new_values_ptr = newnode_ptr + sizeof(bool) * 2 + sizeof(int) + sizeof(TID);
 
-    //Copy small Values in New Node
-    for (int i = 0; i < fill_level / 2; i++) {
+
+    //Keep small values in node
+    swap_ptr += (sizeof(val) + sizeof(TID)) * fill_level / 2;
+
+    //read smallest value of new node to add in parent
+    vc.val = DBAttrType::read(swap_ptr, attrType);
+
+    //copy bigger half in new node
+    for (int i = 0; i < (fill_level - fill_level / 2); i++) {
         DBAttrType::read(swap_ptr, attrType)->write(new_values_ptr);
         swap_ptr += sizeof(val);
         new_values_ptr += sizeof(val);
@@ -681,19 +705,6 @@ DBMyIndex::split_leaf(const DBAttrType &val, const TID &tid, TID node, char *par
         new_values_ptr += sizeof(TID);
     }
 
-    DBAttrType *big_nod_val;
-    big_nod_val = DBAttrType::read(swap_ptr, attrType);
-    for (int i = 0; i < (fill_level - fill_level / 2); i++) {
-        DBAttrType::read(swap_ptr, attrType)->write(start_values_ptr);
-        swap_ptr += sizeof(val);
-        start_values_ptr += sizeof(val);
-        TID tid;
-        tid.read(swap_ptr);
-        tid.write(start_values_ptr);
-        swap_ptr += sizeof(TID);
-        start_values_ptr += sizeof(TID);
-    }
-
     //Fill Levels
     newnode_ptr += sizeof(bool) * 2;
     int level = fill_level / 2;
@@ -701,29 +712,28 @@ DBMyIndex::split_leaf(const DBAttrType &val, const TID &tid, TID node, char *par
     level = fill_level - fill_level / 2;
     memcpy(old_level_ptr, &level, sizeof(int));
 
-    //Next Pointers
-    newnode_ptr += sizeof(int);
-    node.write(newnode_ptr);
+    //Write Next Pointer of smaller node
+    new_node_tid.write(next_ptr);
 
-
-
-//Define Retun value, bigger leaf first value with smaller leaf TID (cause the tree uses smaller than for childs)
-    vc.val = big_nod_val;
+    //Define Retun value, bigger leaf first value with smaller leaf TID (cause the tree uses smaller than for childs)
     vc.isnew = true;
-    vc.tid = new_node_tid;
+
 
     //write new value in leaf
     if (vc.val->operator<(val)) {
+        insert_into_node(val, tid, new_node_tid, nullptr);
         bacbStack.top().setModified();
         bufMgr.unfixBlock(bacbStack.top());
         bacbStack.pop();
-        insert_into_node(val, tid, node, parent_ptr, false);
-        bacbStack.push(bufMgr.fixBlock(file, node.page, LOCK_EXCLUSIVE));
     } else {
-        insert_into_node(val, tid, new_node_tid, parent_ptr, islast);
         bacbStack.top().setModified();
         bufMgr.unfixBlock(bacbStack.top());
+        bacbStack.pop();
+        insert_into_node(val, tid, node, nullptr);
     }
+
+    new_node_tid.write(tid_ptr);
+    bacbStack.top().setModified();
 
 
     return vc;
@@ -739,7 +749,7 @@ DBMyIndex::split_leaf(const DBAttrType &val, const TID &tid, TID node, char *par
  * @param islast
  * @return
  */
-DBMyIndex::value_container DBMyIndex::split_root_leaf(const DBAttrType &val, const TID &tid, TID node, char *parent_ptr, bool islast) {
+DBMyIndex::value_container DBMyIndex::split_root_leaf(const DBAttrType &val, const TID &tid, TID node) {
     /*
      * new_node
      * größere hälfte in node kopieren
@@ -807,25 +817,25 @@ DBMyIndex::value_container DBMyIndex::split_root_leaf(const DBAttrType &val, con
     newnode_ptr += sizeof(int) + sizeof(TID);
 
     memmove(newnode_ptr, ptr, (sizeof(val) + sizeof(tid)) * (leaf_size - leaf_size / 2));
-    if (!islast) {
-        vc.val = DBAttrType::read(newnode_ptr, attrType);
-        vc.tid = node_tid;
-    } else {
-        parent_ptr += sizeof(bool) * +sizeof(int) + sizeof(TID);
-        node_tid.write(parent_ptr);
-    }
+    // if (!islast) {
+    vc.val = DBAttrType::read(newnode_ptr, attrType);
+    vc.tid = node_tid;
+    //} else {
+    //parent_ptr += sizeof(bool) * +sizeof(int) + sizeof(TID);
+    //node_tid.write(parent_ptr);
+    //}
 
 
     vc.isnew = true;
 
     if (vc.val->operator<(val)) {
-        insert_into_node(val, tid, node_tid, parent_ptr, islast);
+        insert_into_node(val, tid, node_tid, nullptr);
 
     } else {
         bacbStack.top().setModified();
         bufMgr.unfixBlock(bacbStack.top());
         bacbStack.pop();
-        insert_into_node(val, tid, node, parent_ptr, false);
+        insert_into_node(val, tid, node, nullptr);
 
     }
 
@@ -853,11 +863,9 @@ DBMyIndex::value_container DBMyIndex::split_root_leaf(const DBAttrType &val, con
 }
 
 DBMyIndex::value_container
-DBMyIndex::insert_into_node(const DBAttrType &val, const TID &tid, TID node, char *parent_ptr, bool islast) {
+DBMyIndex::insert_into_node(const DBAttrType &val, const TID &tid, TID node, char *tid_ptr) {
     struct value_container vc;
     vc.tid.page - 1;
-
-    bool leftie = false;
 
     if (bacbStack.top().getLockMode() != LOCK_EXCLUSIVE)
         bufMgr.upgradeToExclusive(bacbStack.top());
@@ -871,7 +879,6 @@ DBMyIndex::insert_into_node(const DBAttrType &val, const TID &tid, TID node, cha
 
     int page = bacbStack.top().getBlockNo();
 
-    char *leafptr = ptr;
     bool isroot;
     // memcpy (*destination, *source, size);
     memcpy(&isroot, ptr, sizeof(bool));
@@ -888,6 +895,7 @@ DBMyIndex::insert_into_node(const DBAttrType &val, const TID &tid, TID node, cha
     ptr += sizeof(int);
 
     TID nextNode;
+    char * next_ptr = ptr;
     memcpy(&nextNode, ptr, sizeof(TID));
     ptr += sizeof(TID);
 
@@ -944,18 +952,12 @@ DBMyIndex::insert_into_node(const DBAttrType &val, const TID &tid, TID node, cha
         memcpy(fill_level_ptr, &fill_level, sizeof(int));
         bacbStack.top().setModified();
     } else {
-        if (isleaf && !isroot) {
-            vc = split_leaf(val, tid, node, parent_ptr, islast);
-        }
-        else if(!isroot && !isleaf){
-            vc = split_node(val, tid, node,parent_ptr, islast);
-        }
-
-        else if(isroot && !isleaf){
+        if (!isroot) {
+            vc = split_leaf(val, tid, node, tid_ptr);
+        } else if (isroot && !isleaf) {
             vc = split_root(val, tid, node);
-        }
-        else {
-            vc = split_root_leaf(val, tid, node, parent_ptr, islast);
+        } else {
+            vc = split_root_leaf(val, tid, node);
             if (isroot) {
                 char *ptr = bacbStack.top().getDataPtr();
                 int root_level = 1;
@@ -999,7 +1001,7 @@ DBMyIndex::insert_into_node(const DBAttrType &val, const TID &tid, TID node, cha
 }
 
 DBMyIndex::value_container
-DBMyIndex::search_in_node(const DBAttrType &val, const TID &tid, TID node, char *parent_ptr, bool islast) {
+DBMyIndex::search_in_node(const DBAttrType &val, const TID &tid, TID node, char *tid_ptr, bool islast) {
     /* in node nach wert suchen
      *      if leaf
      *          new_leaf_address  = einfügen_in_node
@@ -1014,10 +1016,7 @@ DBMyIndex::search_in_node(const DBAttrType &val, const TID &tid, TID node, char 
     if (bacbStack.top().getLockMode() != LOCK_EXCLUSIVE)
         bufMgr.upgradeToExclusive(bacbStack.top());
 
-
     char *ptr = bacbStack.top().getDataPtr();
-
-    parent_ptr = ptr;
 
     if (bacbStack.top().getBlockNo() == 0) {
         ptr += sizeof(TID);
@@ -1039,6 +1038,7 @@ DBMyIndex::search_in_node(const DBAttrType &val, const TID &tid, TID node, char 
     ptr += sizeof(int);
 
     TID nextNode;
+    char *next_ptr = ptr;
     nextNode.read(ptr);
     ptr += sizeof(TID);
 
@@ -1058,12 +1058,13 @@ DBMyIndex::search_in_node(const DBAttrType &val, const TID &tid, TID node, char 
     for (int i = 0; i < leaf_size; ++i) {
         if (*cnt == 0 || i == fill_level) {
             if (isleaf) {
-                vc = insert_into_node(val, tid, node, parent_ptr, false);
+                insert_position = ptr;
+                vc = insert_into_node(val, tid, node, ptr + sizeof(val));
                 reached_end = true;
                 found = true;
             } else {
                 bacbStack.push(bufMgr.fixBlock(file, nextNode.page, LOCK_EXCLUSIVE));
-                vc = search_in_node(val, tid, nextNode, parent_ptr, true);
+                vc = search_in_node(val, tid, nextNode, next_ptr, true);
                 found = true;
             }
             break;
@@ -1073,14 +1074,14 @@ DBMyIndex::search_in_node(const DBAttrType &val, const TID &tid, TID node, char 
                 found = true;
                 insert_position = ptr;
                 if (isleaf) {
-                    vc = insert_into_node(val, tid, node, parent_ptr, islast);
+                    vc = insert_into_node(val, tid, node, tid_ptr);
                     break;
                 } else {
                     ptr += sizeof(val);
                     TID found_node;
                     found_node.read(ptr);
                     bacbStack.push(bufMgr.fixBlock(file, found_node.page, LOCK_EXCLUSIVE));
-                    vc = search_in_node(val, tid, found_node, parent_ptr, false);
+                    vc = search_in_node(val, tid, found_node, ptr, false);
                     break;
                 }
             }
@@ -1089,13 +1090,20 @@ DBMyIndex::search_in_node(const DBAttrType &val, const TID &tid, TID node, char 
         cnt = (uint *) ptr;
     }
 
-    if (isleaf && !found && !reached_end) {
-        vc = insert_into_node(val, tid, node, parent_ptr, false);
+    if (isleaf && !found) {
+        //If leaf is full we call the split method, the parent pointer is the pointer which was pointing to leaf
+        if (isroot) {
+            vc = insert_into_node(val, tid, node, nullptr);
+        } else {
+            vc = split_leaf(val, tid, node, tid_ptr);
+        }
+
     } else if (!isleaf && !found) {
-        vc = search_in_node(val, tid, nextNode, parent_ptr, true);
+        bacbStack.push(bufMgr.fixBlock(file, nextNode.page, LOCK_EXCLUSIVE));
+        vc = search_in_node(val, tid, nextNode, next_ptr, true);
     }
 
-    if (vc.isnew ) {
+    if (vc.isnew) {
         if (bacbStack.empty()) bacbStack.push(bufMgr.fixBlock(file, node.page, LOCK_EXCLUSIVE));
         else if (bacbStack.top().getLockMode() != LOCK_EXCLUSIVE) {
             int swap_block = bacbStack.top().getBlockNo();
@@ -1104,18 +1112,18 @@ DBMyIndex::search_in_node(const DBAttrType &val, const TID &tid, TID node, char 
             bacbStack.push(bufMgr.fixBlock(file, swap_block, LOCK_EXCLUSIVE));
         }
         value_container vc_new;
-        vc_new = insert_into_node(*vc.val, vc.tid, node, parent_ptr, islast);
+        vc_new = insert_into_node(*vc.val, vc.tid, node, tid_ptr);
         vc = vc_new;
     }
 
 
     if (!bacbStack.empty()) {
         bufMgr.unfixBlock(bacbStack.top());
-        if(bacbStack.top().getBlockNo() != rootTID.page){
+        if (bacbStack.top().getBlockNo() != rootTID.page) {
             bacbStack.pop();
 
         }
-}
+    }
 
 
     tree = printTree();
@@ -1188,11 +1196,11 @@ string DBMyIndex::printNode() {
         ptr += sizeof(val);
         ss << i << " " << val->toString("/n");
 
-        if(!isleaf){
+        if (!isleaf) {
             TID tid;
             tid.read(ptr);
 
-             ss << "   TID:    " << tid.page << endl;
+            ss << "   TID:    " << tid.page << endl;
         }
         ptr += sizeof(TID);
 

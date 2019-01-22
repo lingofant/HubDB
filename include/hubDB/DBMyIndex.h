@@ -44,12 +44,12 @@ namespace HubDB {
             TID initNode(bool isroot, bool isleaf, TID next);
 
             void search_in_node(const DBAttrType &val, DBListTID &tids);
-            value_container search_in_node(const DBAttrType &val, const TID &tid, TID node, char *parent_ptr, bool islast);
-            value_container insert_into_node(const DBAttrType &val, const TID &tid, TID node, char *parent_ptr, bool islast);
-            value_container split_node(const DBAttrType &val, const TID &tid, TID node, char *parent_ptr, bool islast);
-            value_container split_leaf(const DBAttrType &val, const TID &tid, TID node, char *parent_ptr, bool islast);
+            value_container search_in_node(const DBAttrType &val, const TID &tid, TID node, char *tid_ptr, bool islast);
+            value_container insert_into_node(const DBAttrType &val, const TID &tid, TID node, char *tid_ptr);
+            value_container split_node(const DBAttrType &val, const TID &tid, TID node, char *tid_ptr);
+            value_container split_leaf(const DBAttrType &val, const TID &tid, TID node, char *tid_ptr);
             value_container split_root(const DBAttrType &val, const TID &tid, TID node);
-            value_container split_root_leaf(const DBAttrType &val, const TID &tid, TID node, char *parent_ptr, bool islast);
+            value_container split_root_leaf(const DBAttrType &val, const TID &tid, TID node);
 
 
             uint entriesPerPage() const;
